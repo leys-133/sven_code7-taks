@@ -1,3 +1,45 @@
+// ===== LOGGER =====
+class Logger {
+    static log(level, component, message, data = {}) {
+        const timestamp = new Date().toISOString();
+        const logEntry = {
+            timestamp,
+            level,
+            component,
+            message,
+            data,
+            userAgent: navigator.userAgent,
+            url: window.location.href
+        };
+
+        // Store in localStorage for debugging
+        const logs = Storage.get('logs', []);
+        logs.push(logEntry);
+        if (logs.length > 100) logs.shift(); // Keep only last 100 logs
+        Storage.set('logs', logs);
+
+        // Console output
+        const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
+        console[consoleMethod](`[${timestamp}] ${level.toUpperCase()} ${component}: ${message}`, data);
+    }
+
+    static info(component, message, data) {
+        this.log('info', component, message, data);
+    }
+
+    static warn(component, message, data) {
+        this.log('warn', component, message, data);
+    }
+
+    static error(component, message, data) {
+        this.log('error', component, message, data);
+    }
+
+    static debug(component, message, data) {
+        this.log('debug', component, message, data);
+    }
+}
+
 // ===== STORAGE MANAGER =====
 class Storage {
     static get(key, def = null) {
@@ -6,6 +48,7 @@ class Storage {
             return item ? JSON.parse(item) : def;
         } catch (e) {
             console.error('Storage get error:', e);
+            Logger.error('Storage', 'Failed to get item', { key, error: e.message });
             return def;
         }
     }
@@ -16,6 +59,7 @@ class Storage {
             return true;
         } catch (e) {
             console.error('Storage set error:', e);
+            Logger.error('Storage', 'Failed to set item', { key, error: e.message });
             return false;
         }
     }
@@ -25,6 +69,7 @@ class Storage {
             localStorage.removeItem('sc7_' + key);
             return true;
         } catch (e) {
+            Logger.error('Storage', 'Failed to remove item', { key, error: e.message });
             return false;
         }
     }
@@ -35,6 +80,7 @@ class Storage {
             keys.forEach(k => localStorage.removeItem(k));
             return true;
         } catch (e) {
+            Logger.error('Storage', 'Failed to clear storage', { error: e.message });
             return false;
         }
     }
@@ -62,12 +108,12 @@ class DB {
         Storage.set('tasks', tasks);
     }
 
-    static createProject(title, desc = '') {
+    static createProject(title, desc = '', tags = []) {
         return {
             id: this.generateId(),
             title,
             description: desc,
-            tags: [],
+            tags: tags,
             color: ['#7C3AED', '#06B6D4', '#10B981', '#F59E0B', '#EF4444'][Math.floor(Math.random() * 5)],
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -75,7 +121,7 @@ class DB {
         };
     }
 
-    static createTask(projectId, title, desc = '', status = 'backlog') {
+    static createTask(projectId, title, desc = '', status = 'backlog', tags = [], dueDate = null) {
         return {
             id: this.generateId(),
             projectId,
@@ -83,9 +129,23 @@ class DB {
             desc,
             status,
             priority: 'medium',
-            due: null,
+            due: dueDate,
             estimateMin: 0,
-            tags: [],
+            tags: tags,
+            reminder: null,
+            timeTracking: {
+                startedAt: null,
+                totalTime: 0, // in seconds
+                isRunning: false,
+                sessions: [] // array of {start, end, duration}
+            },
+            recurring: {
+                enabled: false,
+                pattern: 'daily', // daily, weekly, monthly
+                interval: 1, // every N days/weeks/months
+                endDate: null,
+                lastCreated: null
+            },
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
@@ -323,6 +383,34 @@ class AIAssistant {
             }
         }
 
+        // أوامر اقتراح عناوين
+        if (response.includes('[SUGGEST_TITLE]')) {
+            const regex = /\[SUGGEST_TITLE\]\((.*?)\)/g;
+            let match;
+            while ((match = regex.exec(response)) !== null) {
+                const [_, description] = match;
+                const suggestions = this.generateTitleSuggestions(description.trim());
+                response = response.replace(match[0], `💡 اقتراحات العناوين:\n${suggestions.map(s => `• ${s}`).join('\n')}`);
+            }
+        }
+
+        // أوامر تفكيك المهام
+        if (response.includes('[BREAKDOWN_TASK]')) {
+            const regex = /\[BREAKDOWN_TASK\]\((.*?)\)/g;
+            let match;
+            while ((match = regex.exec(response)) !== null) {
+                const [_, taskDescription] = match;
+                const breakdown = this.generateTaskBreakdown(taskDescription.trim());
+                response = response.replace(match[0], `📋 تفكيك المهمة:\n${breakdown}`);
+            }
+        }
+
+        // أوامر ملخص التقدم
+        if (response.includes('[PROGRESS_SUMMARY]')) {
+            const progress = this.generateProgressSummary();
+            response = response.replace('[PROGRESS_SUMMARY]', `📊 ملخص التقدم:\n${progress}`);
+        }
+
         return response;
     }
 
@@ -477,6 +565,32 @@ ${this.buildDailySummary()}`,
 
 ${this.buildPriorities()}`,
 
+            'عناوين': `💡 **اقتراحات العناوين**
+
+اكتب وصفاً للمهمة وسأقترح عناوين مناسبة لها.
+
+مثال: "تطوير موقع إلكتروني للشركة"
+اقتراحاتي:
+• تطوير الموقع الإلكتروني
+• تصميم وتطوير موقع الشركة
+• إنشاء موقع ويب تفاعلي`,
+
+            'تفكيك': `📋 **تفكيك المهام**
+
+اكتب وصفاً للمهمة الكبيرة وسأفككها إلى خطوات صغيرة.
+
+مثال: "تطوير تطبيق جوال"
+التفكيك:
+1. تحليل المتطلبات وجمع المعلومات
+2. تصميم واجهة المستخدم
+3. تطوير الوظائف الأساسية
+4. اختبار شامل
+5. نشر التطبيق`,
+
+            'تقدم': `📊 **ملخص التقدم**
+
+${this.generateProgressSummary()}`,
+
             'أفكار': `💡 **أفكار التحسين**
 
 من المساعد سبعة - تطبيق Seven_code7:
@@ -564,6 +678,75 @@ ${low.slice(0, 3).map(t => `• ${t.title}`).join('\n') || '• لا توجد م
 
 💡 **التوصية:** ابدأ بالمهام الحرجة!`;
     }
+
+    // ===== AI ENHANCEMENT METHODS =====
+    generateTitleSuggestions(description) {
+        // Simple title suggestions based on keywords
+        const keywords = {
+            'تطوير': ['تطوير الموقع', 'تطوير التطبيق', 'تطوير النظام'],
+            'تصميم': ['تصميم الواجهة', 'تصميم الشعار', 'تصميم الموقع'],
+            'كتابة': ['كتابة المحتوى', 'كتابة التقرير', 'كتابة المقالة'],
+            'اختبار': ['اختبار الوظائف', 'اختبار الأداء', 'اختبار الأمان'],
+            'تحليل': ['تحليل البيانات', 'تحليل المتطلبات', 'تحليل السوق']
+        };
+
+        const suggestions = [];
+        for (const [keyword, titles] of Object.entries(keywords)) {
+            if (description.includes(keyword)) {
+                suggestions.push(...titles);
+            }
+        }
+
+        return suggestions.length > 0 ? suggestions.slice(0, 3) : [
+            'مهمة جديدة',
+            'تحسين العملية',
+            'تطوير الميزة'
+        ];
+    }
+
+    generateTaskBreakdown(taskDescription) {
+        // Simple task breakdown logic
+        const commonSteps = [
+            'تحليل المتطلبات وجمع المعلومات',
+            'تخطيط الحل والتصميم',
+            'تنفيذ العمل الأساسي',
+            'الاختبار والمراجعة',
+            'الانتهاء والتسليم'
+        ];
+
+        return commonSteps.map((step, index) =>
+            `${index + 1}. ${step}`
+        ).join('\n');
+    }
+
+    generateProgressSummary() {
+        const currentProject = app.state.currentProject;
+        if (!currentProject) return 'لم يتم اختيار مشروع.';
+
+        const tasks = DB.getProjectTasks(currentProject.id);
+        const total = tasks.length;
+        const completed = tasks.filter(t => t.status === 'done').length;
+        const inProgress = tasks.filter(t => t.status === 'doing').length;
+        const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+        const overdue = tasks.filter(t => t.due && new Date(t.due) < new Date()).length;
+        const dueSoon = tasks.filter(t => {
+            if (!t.due) return false;
+            const dueDate = new Date(t.due);
+            const now = new Date();
+            const diffDays = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
+            return diffDays >= 0 && diffDays <= 3;
+        }).length;
+
+        return `📊 **الإحصائيات العامة:**
+• إجمالي المهام: ${total}
+• مكتملة: ${completed} (${percentage}%)
+• قيد التنفيذ: ${inProgress}
+• متأخرة: ${overdue}
+• مستحقة قريباً: ${dueSoon}
+
+🎯 **حالة المشروع:** ${percentage >= 80 ? 'ممتاز' : percentage >= 60 ? 'جيد' : percentage >= 40 ? 'متوسط' : 'يحتاج تحسين'}`;
+    }
 }
 
 // ===== UI UTILITIES =====
@@ -612,18 +795,26 @@ const app = {
 
     // ===== INITIALIZATION =====
     init() {
-        console.log('🚀 Seven_code7 Tasks - Initializing...');
-        console.log('📱 Application by: liath mahmoud mutassem');
-        console.log('🏢 Studio: Seven_code7');
-        
-        const theme = Storage.get('theme', 'light');
-        document.documentElement.setAttribute('data-theme', theme);
-        
-        this.setupEventListeners();
-        this.setupKeyboardShortcuts();
-        this.render();
-        
-        console.log('✅ App initialized successfully!');
+        try {
+            console.log('🚀 Seven_code7 Tasks v2.0 - Initializing...');
+            console.log('📱 Application by: liath mahmoud mutassem');
+            console.log('🏢 Studio: Seven_code7');
+
+            const theme = Storage.get('theme', 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+
+            this.setupEventListeners();
+            this.setupKeyboardShortcuts();
+            this.setupReminders();
+            this.setupRecurringTasks();
+            this.render();
+
+            console.log('✅ App v2.0 initialized successfully!');
+            console.log('🎉 New features: Enhanced animations, skeleton loading, RTL support, tags, due dates, reminders');
+        } catch (error) {
+            Logger.error('App', 'Failed to initialize app', { error: error.message });
+            console.error('❌ App initialization failed:', error);
+        }
     },
 
     // ===== EVENT LISTENERS =====
@@ -631,6 +822,7 @@ const app = {
         // Header buttons
         document.getElementById('btn-theme')?.addEventListener('click', () => this.toggleTheme());
         document.getElementById('btn-ai')?.addEventListener('click', () => this.toggleAI());
+        document.getElementById('btn-pomodoro')?.addEventListener('click', () => this.togglePomodoro());
         document.getElementById('btn-settings')?.addEventListener('click', () => this.showSettings());
 
         // Sidebar
@@ -640,10 +832,13 @@ const app = {
         document.getElementById('view-kanban')?.addEventListener('click', () => this.switchView('kanban'));
         document.getElementById('view-list')?.addEventListener('click', () => this.switchView('list'));
         document.getElementById('view-table')?.addEventListener('click', () => this.switchView('table'));
+        document.getElementById('view-calendar')?.addEventListener('click', () => this.switchView('calendar'));
 
         // Filters
+        document.getElementById('search-input')?.addEventListener('input', () => this.render());
         document.getElementById('filter-status')?.addEventListener('change', () => this.render());
         document.getElementById('filter-priority')?.addEventListener('change', () => this.render());
+        document.getElementById('filter-tags')?.addEventListener('change', () => this.render());
 
         // AI Panel
         document.getElementById('btn-expand-ai')?.addEventListener('click', () => this.toggleAIExpand());
@@ -664,43 +859,129 @@ const app = {
                 this.sendAI();
             });
         });
+
+        // Request notification permission for Pomodoro
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
     },
 
     setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                switch (e.key.toLowerCase()) {
-                    case 'n':
-                        e.preventDefault();
-                        this.showProjectForm();
-                        break;
-                    case 'k':
-                        e.preventDefault();
-                        this.toggleTheme();
-                        break;
-                    case 'm':
-                        e.preventDefault();
-                        this.toggleAI();
-                        break;
-                    case ',':
-                        e.preventDefault();
-                        this.showSettings();
-                        break;
-                    case '1':
-                        e.preventDefault();
-                        this.switchView('kanban');
-                        break;
-                    case '2':
-                        e.preventDefault();
-                        this.switchView('list');
-                        break;
-                    case '3':
-                        e.preventDefault();
-                        this.switchView('table');
-                        break;
+            try {
+                if (e.ctrlKey || e.metaKey) {
+                    switch (e.key.toLowerCase()) {
+                        case 'n':
+                            e.preventDefault();
+                            this.showProjectForm();
+                            break;
+                        case 'k':
+                            e.preventDefault();
+                            this.toggleTheme();
+                            break;
+                        case 'm':
+                            e.preventDefault();
+                            this.toggleAI();
+                            break;
+                        case 'p':
+                            e.preventDefault();
+                            this.togglePomodoro();
+                            break;
+                        case ',':
+                            e.preventDefault();
+                            this.showSettings();
+                            break;
+                        case '1':
+                            e.preventDefault();
+                            this.switchView('kanban');
+                            break;
+                        case '2':
+                            e.preventDefault();
+                            this.switchView('list');
+                            break;
+                        case '3':
+                            e.preventDefault();
+                            this.switchView('table');
+                            break;
+                        case '4':
+                            e.preventDefault();
+                            this.switchView('calendar');
+                            break;
+                    }
                 }
+            } catch (error) {
+                Logger.error('Keyboard', 'Keyboard shortcut error', { key: e.key, error: error.message });
             }
         });
+    },
+
+    setupReminders() {
+        // Check for due tasks every minute
+        setInterval(() => {
+            try {
+                this.checkReminders();
+            } catch (error) {
+                Logger.error('Reminders', 'Failed to check reminders', { error: error.message });
+            }
+        }, 60000); // Check every minute
+
+        // Initial check
+        this.checkReminders();
+    },
+
+    checkReminders() {
+        const tasks = DB.getTasks();
+        const now = new Date();
+
+        tasks.forEach(task => {
+            if (task.due) {
+                const dueDate = new Date(task.due);
+                const diffMs = dueDate - now;
+                const diffHours = diffMs / (1000 * 60 * 60);
+
+                // Reminder conditions
+                const reminders = [
+                    { hours: 24, message: 'مهمة مستحقة غداً', type: 'warning' },
+                    { hours: 1, message: 'مهمة مستحقة خلال ساعة', type: 'warning' },
+                    { hours: 0, message: 'مهمة مستحقة الآن!', type: 'error' }
+                ];
+
+                reminders.forEach(reminder => {
+                    if (Math.abs(diffHours - reminder.hours) < 0.1) { // Within 6 minutes
+                        const reminderKey = `reminder_${task.id}_${reminder.hours}`;
+                        const lastReminder = Storage.get(reminderKey);
+
+                        // Only show if not shown in the last hour
+                        if (!lastReminder || (now - new Date(lastReminder)) > 3600000) {
+                            UI.showToast(`⏰ ${task.title}: ${reminder.message}`, reminder.type);
+                            Storage.set(reminderKey, now.toISOString());
+
+                            // Browser notification if permitted
+                            if ('Notification' in window && Notification.permission === 'granted') {
+                                new Notification('تذكير مهمة', {
+                                    body: `${task.title}: ${reminder.message}`,
+                                    icon: '⏰'
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    },
+
+    setupRecurringTasks() {
+        // Check for recurring tasks every hour
+        setInterval(() => {
+            try {
+                this.checkRecurringTasks();
+            } catch (error) {
+                Logger.error('Recurring', 'Failed to check recurring tasks', { error: error.message });
+            }
+        }, 3600000); // Check every hour
+
+        // Initial check
+        this.checkRecurringTasks();
     },
 
     // ===== THEME =====
@@ -719,9 +1000,90 @@ const app = {
             document.getElementById('ai-input').focus();
         }
     },
-
     toggleAIExpand() {
         document.getElementById('ai-panel').classList.toggle('expanded');
+    },
+
+    // ===== POMODORO TIMER =====
+    pomodoro: {
+        isRunning: false,
+        isBreak: false,
+        timeLeft: 25 * 60, // 25 minutes in seconds
+        workDuration: 25 * 60,
+        breakDuration: 5 * 60,
+        interval: null
+    },
+
+    togglePomodoro() {
+        if (this.pomodoro.isRunning) {
+            this.stopPomodoro();
+        } else {
+            this.startPomodoro();
+        }
+    },
+
+    startPomodoro() {
+        this.pomodoro.isRunning = true;
+        this.pomodoro.interval = setInterval(() => {
+            this.pomodoro.timeLeft--;
+
+            if (this.pomodoro.timeLeft <= 0) {
+                this.pomodoroComplete();
+            }
+
+            this.updatePomodoroDisplay();
+        }, 1000);
+
+        this.updatePomodoroDisplay();
+        UI.showToast('⏱️ بدأ مؤقت التركيز!', 'success');
+    },
+
+    stopPomodoro() {
+        this.pomodoro.isRunning = false;
+        clearInterval(this.pomodoro.interval);
+        this.updatePomodoroDisplay();
+        UI.showToast('⏸️ تم إيقاف المؤقت', 'info');
+    },
+
+    pomodoroComplete() {
+        clearInterval(this.pomodoro.interval);
+        this.pomodoro.isRunning = false;
+
+        if (this.pomodoro.isBreak) {
+            // Break finished, start work
+            this.pomodoro.isBreak = false;
+            this.pomodoro.timeLeft = this.pomodoro.workDuration;
+            UI.showToast('🎉 انتهى وقت الراحة! ابدأ العمل', 'success');
+        } else {
+            // Work finished, start break
+            this.pomodoro.isBreak = true;
+            this.pomodoro.timeLeft = this.pomodoro.breakDuration;
+            UI.showToast('✅ انتهى وقت العمل! خذ قسط من الراحة', 'success');
+        }
+
+        // Play notification sound (if supported)
+        if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Pomodoro Timer', {
+                body: this.pomodoro.isBreak ? 'وقت الراحة!' : 'وقت العمل!',
+                icon: '⏱️'
+            });
+        }
+    },
+
+    updatePomodoroDisplay() {
+        const minutes = Math.floor(this.pomodoro.timeLeft / 60);
+        const seconds = this.pomodoro.timeLeft % 60;
+        const timeString = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+        const btn = document.getElementById('btn-pomodoro');
+        if (btn) {
+            btn.textContent = this.pomodoro.isRunning ? timeString : '⏱️';
+            btn.title = this.pomodoro.isRunning ?
+                `${timeString} - ${this.pomodoro.isBreak ? 'وقت راحة' : 'وقت تركيز'}` :
+                'مؤقت بومودورو (Ctrl+P)';
+            btn.style.background = this.pomodoro.isRunning ?
+                (this.pomodoro.isBreak ? '#10B981' : '#EF4444') : '';
+        }
     },
 
     async sendAI() {
@@ -778,6 +1140,10 @@ const app = {
                         <label class="form-label">الوصف</label>
                         <textarea class="form-textarea project-desc" placeholder="وصف المشروع..."></textarea>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">الوسوم (مفصولة بفواصل)</label>
+                        <input type="text" class="form-input project-tags" placeholder="مثال: تطوير, ويب, عاجل">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn-secondary">إلغاء</button>
@@ -788,6 +1154,7 @@ const app = {
 
         const titleInput = modal.querySelector('.project-title');
         const descInput = modal.querySelector('.project-desc');
+        const tagsInput = modal.querySelector('.project-tags');
         const cancelBtn = modal.querySelector('.btn-secondary');
         const createBtn = modal.querySelector('.btn-primary');
 
@@ -799,7 +1166,8 @@ const app = {
                 return;
             }
 
-            const project = DB.createProject(title, descInput.value);
+            const tags = tagsInput.value.trim() ? tagsInput.value.split(',').map(tag => tag.trim()).filter(tag => tag) : [];
+            const project = DB.createProject(title, descInput.value, tags);
             const projects = DB.getProjects();
             projects.push(project);
             DB.saveProjects(projects);
@@ -859,6 +1227,24 @@ const app = {
                         <label class="form-label">تقدير الوقت (دقائق)</label>
                         <input type="number" class="form-input task-time" placeholder="0" min="0">
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">تاريخ الاستحقاق</label>
+                        <input type="datetime-local" class="form-input task-due" placeholder="اختر تاريخ الاستحقاق">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">تذكير (دقائق قبل الاستحقاق)</label>
+                        <select class="form-select task-reminder">
+                            <option value="">بدون تذكير</option>
+                            <option value="15">15 دقيقة</option>
+                            <option value="30">30 دقيقة</option>
+                            <option value="60">ساعة</option>
+                            <option value="1440">يوم</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">الوسوم (مفصولة بفواصل)</label>
+                        <input type="text" class="form-input task-tags" placeholder="مثال: عاجل, مهم, مراجعة">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn-secondary">إلغاء</button>
@@ -871,6 +1257,9 @@ const app = {
         const descInput = modal.querySelector('.task-desc');
         const priorityInput = modal.querySelector('.task-priority');
         const timeInput = modal.querySelector('.task-time');
+        const dueInput = modal.querySelector('.task-due');
+        const reminderInput = modal.querySelector('.task-reminder');
+        const tagsInput = modal.querySelector('.task-tags');
         const cancelBtn = modal.querySelector('.btn-secondary');
         const createBtn = modal.querySelector('.btn-primary');
 
@@ -882,9 +1271,12 @@ const app = {
                 return;
             }
 
-            const task = DB.createTask(projectId, title, descInput.value, status);
+            const dueDate = dueInput.value ? new Date(dueInput.value).toISOString() : null;
+            const tags = tagsInput.value.trim() ? tagsInput.value.split(',').map(tag => tag.trim()).filter(tag => tag) : [];
+            const task = DB.createTask(projectId, title, descInput.value, status, tags, dueDate);
             task.priority = priorityInput.value;
             task.estimateMin = parseInt(timeInput.value) || 0;
+            task.reminder = reminderInput.value ? parseInt(reminderInput.value) : null;
 
             const tasks = DB.getTasks();
             tasks.push(task);
@@ -918,6 +1310,162 @@ const app = {
         }
     },
 
+    // ===== TIME TRACKING =====
+    startTimeTracking(taskId) {
+        const tasks = DB.getTasks();
+        const task = tasks.find(t => t.id === taskId);
+        if (task && !task.timeTracking.isRunning) {
+            task.timeTracking.isRunning = true;
+            task.timeTracking.startedAt = new Date().toISOString();
+            DB.saveTasks(tasks);
+            UI.showToast('⏱️ بدأ تتبع الوقت', 'info');
+            this.render();
+        }
+    },
+
+    stopTimeTracking(taskId) {
+        const tasks = DB.getTasks();
+        const task = tasks.find(t => t.id === taskId);
+        if (task && task.timeTracking.isRunning) {
+            const startTime = new Date(task.timeTracking.startedAt);
+            const endTime = new Date();
+            const duration = Math.floor((endTime - startTime) / 1000); // in seconds
+
+            task.timeTracking.isRunning = false;
+            task.timeTracking.totalTime += duration;
+            task.timeTracking.sessions.push({
+                start: task.timeTracking.startedAt,
+                end: endTime.toISOString(),
+                duration: duration
+            });
+            task.timeTracking.startedAt = null;
+
+            DB.saveTasks(tasks);
+            UI.showToast(`⏹️ تم إيقاف التتبع - المدة: ${this.formatDuration(duration)}`, 'success');
+            this.render();
+        }
+    },
+
+    formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        if (hours > 0) {
+            return `${hours}س ${minutes}د`;
+        }
+        return `${minutes}د`;
+    },
+
+    getTaskTimeDisplay(task) {
+        let display = '';
+        if (task.timeTracking.isRunning) {
+            const startTime = new Date(task.timeTracking.startedAt);
+            const now = new Date();
+            const currentSession = Math.floor((now - startTime) / 1000);
+            display = `⏱️ ${this.formatDuration(task.timeTracking.totalTime + currentSession)}`;
+        } else if (task.timeTracking.totalTime > 0) {
+            display = `⏱️ ${this.formatDuration(task.timeTracking.totalTime)}`;
+        }
+        return display;
+    },
+
+    // ===== RECURRING TASKS =====
+    checkRecurringTasks() {
+        const tasks = DB.getTasks();
+        const now = new Date();
+
+        tasks.forEach(task => {
+            if (task.recurring.enabled && task.status === 'done') {
+                const lastCreated = task.recurring.lastCreated ? new Date(task.recurring.lastCreated) : new Date(task.createdAt);
+                const shouldCreate = this.shouldCreateRecurringTask(task, lastCreated, now);
+
+                if (shouldCreate) {
+                    this.createRecurringTask(task);
+                }
+            }
+        });
+    },
+
+    shouldCreateRecurringTask(task, lastCreated, now) {
+        const diffMs = now - lastCreated;
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+        switch (task.recurring.pattern) {
+            case 'daily':
+                return diffDays >= task.recurring.interval;
+            case 'weekly':
+                return diffDays >= (task.recurring.interval * 7);
+            case 'monthly':
+                const lastMonth = lastCreated.getMonth();
+                const currentMonth = now.getMonth();
+                const monthDiff = (now.getFullYear() - lastCreated.getFullYear()) * 12 + currentMonth - lastMonth;
+                return monthDiff >= task.recurring.interval;
+            default:
+                return false;
+        }
+    },
+
+    createRecurringTask(originalTask) {
+        const newTask = DB.createTask(
+            originalTask.projectId,
+            `${originalTask.title} (متكررة)`,
+            originalTask.desc,
+            'backlog'
+        );
+
+        newTask.priority = originalTask.priority;
+        newTask.estimateMin = originalTask.estimateMin;
+        newTask.tags = [...(originalTask.tags || [])];
+        newTask.due = this.calculateNextDueDate(originalTask);
+
+        // Copy recurring settings
+        newTask.recurring = { ...originalTask.recurring };
+        newTask.recurring.lastCreated = new Date().toISOString();
+
+        // Update original task's last created
+        originalTask.recurring.lastCreated = new Date().toISOString();
+
+        const tasks = DB.getTasks();
+        tasks.push(newTask);
+        DB.saveTasks(tasks);
+
+        UI.showToast(`🔄 تم إنشاء مهمة متكررة: ${newTask.title}`, 'info');
+    },
+
+    calculateNextDueDate(task) {
+        if (!task.due) return null;
+
+        const currentDue = new Date(task.due);
+        const newDue = new Date(currentDue);
+
+        switch (task.recurring.pattern) {
+            case 'daily':
+                newDue.setDate(newDue.getDate() + task.recurring.interval);
+                break;
+            case 'weekly':
+                newDue.setDate(newDue.getDate() + (task.recurring.interval * 7));
+                break;
+            case 'monthly':
+                newDue.setMonth(newDue.getMonth() + task.recurring.interval);
+                break;
+        }
+
+        return newDue.toISOString();
+    },
+
+    toggleRecurring(taskId) {
+        const tasks = DB.getTasks();
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+            task.recurring.enabled = !task.recurring.enabled;
+            if (task.recurring.enabled) {
+                task.recurring.lastCreated = new Date().toISOString();
+            }
+            DB.saveTasks(tasks);
+            UI.showToast(`🔄 ${task.recurring.enabled ? 'تم تفعيل' : 'تم إلغاء'} التكرار للمهمة`, 'info');
+            this.render();
+        }
+    },
+
     getStatusLabel(status) {
         const labels = {
             backlog: 'قيد الانتظار',
@@ -926,9 +1474,7 @@ const app = {
             done: 'مكتملة'
         };
         return labels[status] || status;
-    }
-
-    ,
+    },
 
     getPriorityLabel(priority) {
         const labels = {
@@ -962,7 +1508,7 @@ const app = {
                             <strong>🏢 الاستوديو:</strong> Seven_code7<br>
                             <strong>👤 المؤسس:</strong> ليث محمود معتصم<br>
                             <strong>🤖 مساعد ذكي:</strong> المساعد سبعة<br>
-                            <strong>📅 الإصدار:</strong> 1.0.0
+                            <strong>📅 الإصدار:</strong> 2.0.0
                         </div>
                     </div>
                     <div class="form-group">
@@ -1053,8 +1599,11 @@ const app = {
         }
 
         list.innerHTML = projects.map(p => `
-            <li class="project-item ${this.state.currentProject?.id === p.id ? 'active' : ''}" onclick="app.selectProject('${p.id}')">
-                <span class="project-item-name">${p.title}</span>
+            <li class="project-item animate-slide-up ${this.state.currentProject?.id === p.id ? 'active' : ''}" onclick="app.selectProject('${p.id}')">
+                <div>
+                    <span class="project-item-name">${p.title}</span>
+                    ${p.tags && p.tags.length > 0 ? `<div style="margin-top: 0.25rem;">${p.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}</div>` : ''}
+                </div>
                 <div class="project-item-actions">
                     <button onclick="event.stopPropagation(); app.deleteProject('${p.id}')" title="حذف">🗑️</button>
                 </div>
@@ -1085,12 +1634,33 @@ const app = {
         }
 
         const tasks = DB.getProjectTasks(this.state.currentProject.id);
+        const searchTerm = document.getElementById('search-input')?.value?.toLowerCase() || '';
         const statusFilter = document.getElementById('filter-status').value;
         const priorityFilter = document.getElementById('filter-priority').value;
+        const tagFilter = document.getElementById('filter-tags').value;
 
         let filtered = tasks;
+
+        // Search filter
+        if (searchTerm) {
+            filtered = filtered.filter(t =>
+                t.title.toLowerCase().includes(searchTerm) ||
+                t.desc?.toLowerCase().includes(searchTerm) ||
+                t.tags?.some(tag => tag.toLowerCase().includes(searchTerm))
+            );
+        }
+
+        // Status filter
         if (statusFilter) filtered = filtered.filter(t => t.status === statusFilter);
+
+        // Priority filter
         if (priorityFilter) filtered = filtered.filter(t => t.priority === priorityFilter);
+
+        // Tag filter
+        if (tagFilter) filtered = filtered.filter(t => t.tags && t.tags.includes(tagFilter));
+
+        // Update tag filter options
+        this.updateTagFilterOptions(tasks);
 
         switch (this.state.currentView) {
             case 'kanban':
@@ -1102,7 +1672,32 @@ const app = {
             case 'table':
                 this.renderTable(filtered);
                 break;
+            case 'calendar':
+                this.renderCalendar(filtered);
+                break;
         }
+    },
+
+    updateTagFilterOptions(tasks) {
+        const tagFilter = document.getElementById('filter-tags');
+        const allTags = new Set();
+
+        tasks.forEach(task => {
+            if (task.tags) {
+                task.tags.forEach(tag => allTags.add(tag));
+            }
+        });
+
+        const currentValue = tagFilter.value;
+        tagFilter.innerHTML = '<option value="">جميع الوسوم</option>';
+
+        Array.from(allTags).sort().forEach(tag => {
+            const option = document.createElement('option');
+            option.value = tag;
+            option.textContent = tag;
+            if (currentValue === tag) option.selected = true;
+            tagFilter.appendChild(option);
+        });
     },
 
     renderKanban(tasks) {
@@ -1117,16 +1712,16 @@ const app = {
 
         for (const [status, col] of Object.entries(columns)) {
             const columnTasks = tasks.filter(t => t.status === status);
-            
+
             html += `
                 <div class="kanban-column">
                     <div class="kanban-column-header">
                         <h3 class="kanban-column-title">${col.emoji} ${col.title}</h3>
                         <div class="kanban-column-count">${columnTasks.length}</div>
                     </div>
-                    <div class="kanban-tasks" ondrop="app.dropTask(event, '${status}')" ondragover="event.preventDefault()">
-                        ${columnTasks.map(task => `
-                            <div class="task-card" draggable="true" ondragstart="app.dragStart(event, '${task.id}')">
+                    <div class="kanban-tasks" ondrop="app.dropTask(event, '${status}')" ondragover="app.dragOver(event)" ondragleave="app.dragLeave(event)">
+                        ${columnTasks.length === 0 ? this.renderSkeletonTasks() : columnTasks.map(task => `
+                            <div class="task-card animate-fade-scale" draggable="true" data-task-id="${task.id}" ondragstart="app.dragStart(event, '${task.id}')" ondragend="app.dragEnd(event)" ondragover="app.dragOverTask(event, '${task.id}')" ondrop="app.dropOnTask(event, '${task.id}')">
                                 <div class="task-card-header">
                                     <h4 class="task-card-title">${task.title}</h4>
                                     <div class="task-priority ${task.priority}"></div>
@@ -1134,14 +1729,18 @@ const app = {
                                 ${task.desc ? `<p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0.5rem 0;">${task.desc}</p>` : ''}
                                 <div>
                                     ${task.estimateMin ? `<span class="task-badge">⏱️ ${task.estimateMin}د</span>` : ''}
+                                    ${this.getTaskTimeDisplay(task) ? `<span class="task-badge">${this.getTaskTimeDisplay(task)}</span>` : ''}
+                                    ${task.due ? `<span class="task-badge">📅 ${new Date(task.due).toLocaleDateString('ar-SA')}</span>` : ''}
+                                    ${task.tags && task.tags.length > 0 ? task.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : ''}
                                 </div>
                                 <div class="task-actions">
                                     <button onclick="event.stopPropagation(); app.updateTaskStatus('${task.id}', 'done')">✅</button>
+                                    <button onclick="event.stopPropagation(); ${task.timeTracking.isRunning ? `app.stopTimeTracking('${task.id}')` : `app.startTimeTracking('${task.id}')`}">${task.timeTracking.isRunning ? '⏹️' : '⏱️'}</button>
                                     <button onclick="event.stopPropagation(); app.deleteTask('${task.id}')">🗑️</button>
                                 </div>
                             </div>
                         `).join('')}
-                        <button class="btn-secondary" style="width: 100%; margin-top: 0.5rem;" onclick="app.showTaskForm('${this.state.currentProject.id}', '${status}')">
+                        <button class="btn-secondary hover-lift" style="width: 100%; margin-top: 0.5rem;" onclick="app.showTaskForm('${this.state.currentProject.id}', '${status}')">
                             ➕ مهمة جديدة
                         </button>
                     </div>
@@ -1153,12 +1752,29 @@ const app = {
         document.getElementById('content-area').innerHTML = html;
     },
 
+    renderSkeletonTasks() {
+        return `
+            <div class="task-card skeleton animate-pulse">
+                <div class="task-card-header">
+                    <div class="skeleton-text" style="width: 80%;"></div>
+                    <div class="skeleton" style="width: 12px; height: 12px; border-radius: 50%;"></div>
+                </div>
+                <div class="skeleton-text" style="width: 90%;"></div>
+                <div class="skeleton-text" style="width: 40%;"></div>
+                <div class="task-actions">
+                    <div class="skeleton" style="width: 30px; height: 24px; border-radius: 4px;"></div>
+                    <div class="skeleton" style="width: 30px; height: 24px; border-radius: 4px;"></div>
+                </div>
+            </div>
+        `;
+    },
+
     renderList(tasks) {
         document.getElementById('content-area').innerHTML = `
             <div class="list-view">
                 ${tasks.length === 0 ? '<p style="text-align: center; color: var(--text-secondary);">📭 لا توجد مهام</p>' : ''}
                 ${tasks.map(task => `
-                    <div class="list-item">
+                    <div class="list-item animate-slide-up hover-lift">
                         <div class="list-item-header">
                             <h4 class="list-item-title">${task.title}</h4>
                             <div class="task-priority ${task.priority}"></div>
@@ -1168,6 +1784,7 @@ const app = {
                             <span class="task-badge">${this.getStatusLabel(task.status)}</span>
                             <span class="task-badge">${this.getPriorityLabel(task.priority)}</span>
                             ${task.estimateMin ? `<span class="task-badge">⏱️ ${task.estimateMin}د</span>` : ''}
+                            ${task.tags && task.tags.length > 0 ? task.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : ''}
                         </div>
                         <div class="task-actions">
                             <button onclick="app.updateTaskStatus('${task.id}', 'done')">✅ مكمل</button>
@@ -1175,7 +1792,7 @@ const app = {
                         </div>
                     </div>
                 `).join('')}
-                <button class="btn-primary" style="width: 100%; margin-top: 1rem;" onclick="app.showTaskForm('${this.state.currentProject.id}')">
+                <button class="btn-primary hover-lift" style="width: 100%; margin-top: 1rem;" onclick="app.showTaskForm('${this.state.currentProject.id}')">
                     ➕ مهمة جديدة
                 </button>
             </div>
@@ -1198,7 +1815,7 @@ const app = {
                     <tbody>
                         ${tasks.length === 0 ? '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">📭 لا توجد مهام</td></tr>' : ''}
                         ${tasks.map(task => `
-                            <tr>
+                            <tr class="animate-fade-scale">
                                 <td><strong>${task.title}</strong>${task.desc ? `<br><small style="color: var(--text-secondary);">${task.desc}</small>` : ''}</td>
                                 <td>${this.getStatusLabel(task.status)}</td>
                                 <td>
@@ -1207,8 +1824,11 @@ const app = {
                                 </td>
                                 <td>${task.estimateMin ? task.estimateMin + 'د' : '-'}</td>
                                 <td>
-                                    <button onclick="app.updateTaskStatus('${task.id}', 'done')" style="padding: 0.25rem 0.5rem; margin-right: 0.25rem;">✅</button>
-                                    <button onclick="app.deleteTask('${task.id}')" style="padding: 0.25rem 0.5rem;">🗑️</button>
+                                    ${task.tags && task.tags.length > 0 ? task.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : '-'}
+                                    <div style="margin-top: 0.25rem;">
+                                        <button onclick="app.updateTaskStatus('${task.id}', 'done')" style="padding: 0.25rem 0.5rem; margin-right: 0.25rem;">✅</button>
+                                        <button onclick="app.deleteTask('${task.id}')" style="padding: 0.25rem 0.5rem;">🗑️</button>
+                                    </div>
                                 </td>
                             </tr>
                         `).join('')}
@@ -1218,20 +1838,156 @@ const app = {
         `;
     },
 
+    renderCalendar(tasks) {
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+
+        // Group tasks by date
+        const tasksByDate = {};
+        tasks.forEach(task => {
+            if (task.due) {
+                const dateKey = new Date(task.due).toDateString();
+                if (!tasksByDate[dateKey]) tasksByDate[dateKey] = [];
+                tasksByDate[dateKey].push(task);
+            }
+        });
+
+        // Calendar navigation
+        const monthNames = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+                           'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+
+        const calendarHTML = `
+            <div class="calendar-view">
+                <div class="calendar-header">
+                    <button class="calendar-nav-btn" onclick="app.changeMonth(-1)">⬅️</button>
+                    <h2 class="calendar-title">${monthNames[currentMonth]} ${currentYear}</h2>
+                    <button class="calendar-nav-btn" onclick="app.changeMonth(1)">➡️</button>
+                </div>
+                <div class="calendar-grid">
+                    <div class="calendar-day-header">الأحد</div>
+                    <div class="calendar-day-header">الاثنين</div>
+                    <div class="calendar-day-header">الثلاثاء</div>
+                    <div class="calendar-day-header">الأربعاء</div>
+                    <div class="calendar-day-header">الخميس</div>
+                    <div class="calendar-day-header">الجمعة</div>
+                    <div class="calendar-day-header">السبت</div>
+                    ${this.generateCalendarDays(currentMonth, currentYear, tasksByDate)}
+                </div>
+            </div>
+        `;
+
+        document.getElementById('content-area').innerHTML = calendarHTML;
+    },
+
+    generateCalendarDays(month, year, tasksByDate) {
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const startDate = new Date(firstDay);
+        startDate.setDate(startDate.getDate() - firstDay.getDay());
+
+        let html = '';
+        const currentDate = new Date(startDate);
+
+        for (let i = 0; i < 42; i++) { // 6 weeks * 7 days
+            const dateKey = currentDate.toDateString();
+            const dayTasks = tasksByDate[dateKey] || [];
+            const isCurrentMonth = currentDate.getMonth() === month;
+            const isToday = currentDate.toDateString() === new Date().toDateString();
+
+            html += `
+                <div class="calendar-day ${isCurrentMonth ? '' : 'other-month'} ${isToday ? 'today' : ''}">
+                    <div class="calendar-day-number">${currentDate.getDate()}</div>
+                    <div class="calendar-day-tasks">
+                        ${dayTasks.slice(0, 3).map(task => `
+                            <div class="calendar-task ${task.priority}" title="${task.title}">
+                                ${task.title.length > 15 ? task.title.substring(0, 15) + '...' : task.title}
+                            </div>
+                        `).join('')}
+                        ${dayTasks.length > 3 ? `<div class="calendar-task-more">+${dayTasks.length - 3}</div>` : ''}
+                    </div>
+                </div>
+            `;
+
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        return html;
+    },
+
+    changeMonth(direction) {
+        // This would need calendar state management for full functionality
+        UI.showToast('ميزة التنقل بين الأشهر قيد التطوير', 'info');
+    },
+
     // ===== DRAG & DROP =====
     draggedTaskId: null,
+    draggedTaskElement: null,
 
     dragStart(e, taskId) {
         this.draggedTaskId = taskId;
-        e.target.closest('.task-card')?.classList.add('dragging');
+        this.draggedTaskElement = e.target.closest('.task-card');
+        this.draggedTaskElement?.classList.add('dragging');
+
+        // Add visual feedback
+        setTimeout(() => {
+            this.draggedTaskElement?.classList.add('animate-pulse');
+        }, 100);
+    },
+
+    dragEnd(e) {
+        // Clean up dragging state
+        this.draggedTaskElement?.classList.remove('dragging', 'animate-pulse');
+        this.draggedTaskId = null;
+        this.draggedTaskElement = null;
+    },
+
+    dragOver(e) {
+        e.preventDefault();
+        e.currentTarget.classList.add('drag-over');
+    },
+
+    dragLeave(e) {
+        e.currentTarget.classList.remove('drag-over');
     },
 
     dropTask(e, status) {
         e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+
         if (this.draggedTaskId) {
-            this.updateTaskStatus(this.draggedTaskId, status);
+            const task = DB.getTask(this.draggedTaskId);
+            if (task && task.status !== status) {
+                this.updateTaskStatus(this.draggedTaskId, status);
+                UI.showToast(`✅ تم نقل المهمة إلى: ${this.getStatusLabel(status)}`, 'success');
+            }
             this.draggedTaskId = null;
+            this.draggedTaskElement = null;
         }
+    },
+
+    // ===== TASK REORDERING =====
+    dragOverTask(e, targetTaskId) {
+        e.preventDefault();
+        const draggedElement = this.draggedTaskElement;
+        const targetElement = document.querySelector(`[data-task-id="${targetTaskId}"]`);
+
+        if (!draggedElement || !targetElement || draggedElement === targetElement) return;
+
+        const rect = targetElement.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+
+        if (e.clientY < midpoint) {
+            targetElement.parentNode.insertBefore(draggedElement, targetElement);
+        } else {
+            targetElement.parentNode.insertBefore(draggedElement, targetElement.nextSibling);
+        }
+    },
+
+    dropOnTask(e, targetTaskId) {
+        e.preventDefault();
+        // Reordering logic can be implemented here if needed
+        this.dragEnd(e);
     }
 };
 
