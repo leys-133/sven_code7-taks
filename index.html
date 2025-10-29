@@ -1,31 +1,38 @@
-<!DOCTYPE html>
+
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="تطبيق إدارة المشاريع والمهام الذكي من Seven_code7">
-    <title>Seven_code7 Tasks - إدارة المشاريع</title>
+    <meta name="description" content="تطبيق إدارة المشاريع والمهام الذكي من Seven_code7 - الإصدار 2.0.0">
+    <meta name="theme-color" content="#7C3AED">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Seven_code7 Tasks v2.0 - إدارة المشاريع</title>
     <link href="https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
 </head>
 <body>
     <div id="root" class="app-container">
         <!-- Header -->
         <header class="app-header">
             <div class="logo-section">
-                <h1>🎯 Seven_code7 Tasks</h1>
+                <h1>🎯 Seven_code7 Tasks <span class="version-badge">v2.0</span></h1>
             </div>
             <div class="header-actions">
-                <button class="header-btn" id="btn-theme" title="الوضع الليلي (Ctrl+K)">🌙</button>
-                <button class="header-btn" id="btn-ai" title="المساعد الذكي (Ctrl+M)">🤖</button>
-                <button class="header-btn" id="btn-settings" title="الإعدادات (Ctrl+,)">⚙️</button>
+                <button class="header-btn" id="btn-theme" title="الوضع الليلي (Ctrl+K)" aria-label="تبديل الوضع الليلي/النهاري">🌙</button>
+                <button class="header-btn" id="btn-ai" title="المساعد الذكي (Ctrl+M)" aria-label="فتح المساعد الذكي">🤖</button>
+                <button class="header-btn" id="btn-pomodoro" title="مؤقت بومودورو (Ctrl+P)" aria-label="تشغيل مؤقت بومودورو">⏱️</button>
+                <button class="header-btn" id="btn-settings" title="الإعدادات (Ctrl+,)" aria-label="فتح الإعدادات">⚙️</button>
             </div>
         </header>
 
         <!-- Sidebar -->
         <aside class="sidebar">
             <h3 class="nav-title">المشاريع</h3>
-            <button class="btn-new" id="btn-new-project" title="Ctrl+N">
+            <button class="btn-new" id="btn-new-project" title="Ctrl+N" aria-label="إنشاء مشروع جديد">
                 ➕ مشروع جديد
             </button>
             <ul id="projects-list" class="projects-list"></ul>
@@ -51,24 +58,29 @@
             <!-- Toolbar -->
             <div class="toolbar">
                 <div class="view-controls">
-                    <button class="view-btn active" id="view-kanban" title="Ctrl+1">📊 كانبان</button>
-                    <button class="view-btn" id="view-list" title="Ctrl+2">📋 قائمة</button>
-                    <button class="view-btn" id="view-table" title="Ctrl+3">📈 جدول</button>
+                    <button class="view-btn active" id="view-kanban" title="Ctrl+1" aria-label="عرض كانبان">📊 كانبان</button>
+                    <button class="view-btn" id="view-list" title="Ctrl+2" aria-label="عرض القائمة">📋 قائمة</button>
+                    <button class="view-btn" id="view-table" title="Ctrl+3" aria-label="عرض الجدول">📈 جدول</button>
+                    <button class="view-btn" id="view-calendar" title="Ctrl+4" aria-label="عرض التقويم">📅 تقويم</button>
                 </div>
                 <div class="filter-controls">
-                    <select id="filter-status" class="filter-select">
+                    <input type="text" id="search-input" class="search-input" placeholder="🔍 بحث في المهام..." aria-label="بحث في المهام">
+                    <select id="filter-status" class="filter-select" aria-label="فلترة حسب الحالة">
                         <option value="">جميع الحالات</option>
                         <option value="backlog">قيد الانتظار</option>
                         <option value="doing">قيد الإنجاز</option>
                         <option value="review">قيد المراجعة</option>
                         <option value="done">مكتملة</option>
                     </select>
-                    <select id="filter-priority" class="filter-select">
+                    <select id="filter-priority" class="filter-select" aria-label="فلترة حسب الأولوية">
                         <option value="">جميع الأولويات</option>
                         <option value="low">منخفضة</option>
                         <option value="medium">متوسطة</option>
                         <option value="high">عالية</option>
                         <option value="critical">حرجة</option>
+                    </select>
+                    <select id="filter-tags" class="filter-select" aria-label="فلترة حسب الوسوم">
+                        <option value="">جميع الوسوم</option>
                     </select>
                 </div>
             </div>
@@ -88,8 +100,8 @@
             <div class="ai-header">
                 <h3>المساعد سبعة 🤖</h3>
                 <div class="ai-controls">
-                    <button class="ai-control-btn" id="btn-expand-ai" title="توسيع">⤢</button>
-                    <button class="ai-control-btn" id="btn-close-ai" title="إغلاق">✕</button>
+                    <button class="ai-control-btn" id="btn-expand-ai" title="توسيع" aria-label="توسيع لوحة المساعد الذكي">⤢</button>
+                    <button class="ai-control-btn" id="btn-close-ai" title="إغلاق" aria-label="إغلاق لوحة المساعد الذكي">✕</button>
                 </div>
             </div>
 
@@ -99,6 +111,9 @@
                 <button class="template-btn" data-prompt="جدول" title="جدول العمل الأسبوعي">📅 جدول</button>
                 <button class="template-btn" data-prompt="ملخص" title="ملخص اليوم">📊 ملخص</button>
                 <button class="template-btn" data-prompt="أولويات" title="ترتيب الأولويات">⭐ أولويات</button>
+                <button class="template-btn" data-prompt="عناوين" title="اقتراحات العناوين">📝 عناوين</button>
+                <button class="template-btn" data-prompt="تفكيك" title="تفكيك المهام">🔍 تفكيك</button>
+                <button class="template-btn" data-prompt="تقدم" title="ملخص التقدم">📈 تقدم</button>
                 <button class="template-btn" data-prompt="أفكار" title="أفكار التحسين">💭 أفكار</button>
             </div>
 
@@ -106,13 +121,14 @@
 
             <div class="ai-input-area">
                 <div class="ai-input-wrapper">
-                    <input 
-                        type="text" 
-                        id="ai-input" 
-                        class="ai-input" 
+                    <input
+                        type="text"
+                        id="ai-input"
+                        class="ai-input"
                         placeholder="اكتب رسالة... (Enter)"
+                        aria-label="رسالة للمساعد الذكي"
                     >
-                    <button class="ai-send-btn" id="btn-ai-send" title="Send (Ctrl+Enter)">➤</button>
+                    <button class="ai-send-btn" id="btn-ai-send" title="Send (Ctrl+Enter)" aria-label="إرسال الرسالة">➤</button>
                 </div>
                 <small class="ai-hint">💡 اختر من الأزرار أعلاه أو اكتب رسالتك</small>
             </div>
